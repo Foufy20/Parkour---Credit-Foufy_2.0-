@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>PARKOUR 3D - VITESSE CONTRÔLÉE</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; font-family: 'Segoe UI', sans-serif; }
+        
+        /* --- HUD & INTERFACE --- */
+        #hud {
+            position: absolute;
+            top: 40px; 
+            left: 20px;
+            color: #00ffcc; font-size: 16px; font-weight: bold;
+            text-shadow: 0 0 5px #00ffcc;
+            pointer-events: none;
+            background: rgba(0,0,0,0.6);
+            padding: 10px; border-radius: 8px;
+        }
+
+        /* BARRE DE PROGRESSION */
+        #progress-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 25px;
+            background: #111;
+            border-bottom: 2px solid #333;
+            z-index: 100;
+        }
+
+        #progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #0088ff, #00ffcc);
+            box-shadow: 0 0 15px #00ffcc;
+            transition: width 0.1s linear;
+        }
+
+        #progress-text {
+            position: absolute;
+            width: 100%;
+            top: 0;
+            line-height: 25px;
+            text-align: center;
+            color: #fff;
+            font-weight: bold;
+            font-family: monospace;
+            text-shadow: 1px 1px 2px black;
+            z-index: 101;
+        }
+
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 6px; height: 6px;
+            background: #ff0055; border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px #ff0055; pointer-events: none;
+        }
+
+        #menu {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 25, 0.95);
+            padding: 40px; border: 2px solid #00ffcc; border-radius: 15px;
+            text-align: center; color: white;
+            box-shadow: 0 0 50px rgba(0, 255, 204, 0.2);
+            cursor: pointer; z-index: 200;
+        }
+        .key { display: inline-block; padding: 5px 10px; border: 1px solid #555; border-radius: 5px; color: #fff; background: #222; font-family: monospace; }
+		
+		.credit {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  font-size: 12px;
+  color: #666;
+  z-index: 1000;
+}
+    </style>
+</head>
+<body>
+
+    <div id="progress-container">
+        <div id="progress-text">0%</div>
+        <div id="progress-fill"></div>
+    </div>
+
+    <div id="crosshair"></div>
+    <div id="hud">
+        VITESSE: <span id="speed-val">0</span> km/h<br>
+        FPS: <span id="fps-val">60</span>
+    </div>
+
+    <div id="menu">
+        <h1 style="color:#00ffcc; margin-top:0;">NEON RUNNER</h1>
+        <p>Cliquez pour JOUER</p>
+        <p><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> = Courir</p>
+        <p><span class="key">ESPACE</span> = Sauter</p>
+        <p style="font-size:12px; color:#888;">Objectif : Atteindre 100%</p>
+    </div>
+	
+	<a class=credit>Crédit HTML : Foufy_2.0<a>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- 1. SCÈNE ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050510);
+        scene.fog = new THREE.FogExp2(0x050510, 0.025);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // --- LUMIÈRES ---
+        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0x00ffcc, 1.5);
+        dirLight.position.set(10, 50, 20);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.set(2048, 2048);
+        dirLight.shadow.camera.left = -100;
+        dirLight.shadow.camera.right = 100;
+        dirLight.shadow.camera.top = 100;
+        dirLight.shadow.camera.bottom = -100;
+        scene.add(dirLight);
+
+        // --- 2. TEXTURES GRILLES ---
+        function createGrid(color) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#111'; ctx.fillRect(0,0,256,256);
+            ctx.strokeStyle = color; ctx.lineWidth = 8;
+            ctx.strokeRect(0,0,256,256);
+            // Motif interne
+            ctx.fillStyle = color; ctx.globalAlpha = 0.1;
+            ctx.fillRect(20, 20, 216, 216);
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        const matGreen = new THREE.MeshStandardMaterial({ map: createGrid('#00ffcc'), roughness: 0.1 });
+        const matBlue = new THREE.MeshStandardMaterial({ map: createGrid('#0088ff'), roughness: 0.1 });
+        const matRed = new THREE.MeshStandardMaterial({ map: createGrid('#ff0055'), roughness: 0.1 });
+        const matGold = new THREE.MeshStandardMaterial({ map: createGrid('#ffff00'), roughness: 0.0 });
+
+        // --- 3. MONDE & PROGRESSION ---
+        const platforms = [];
+        let finishLineZ = 0; 
+
+        function createBlock(x, y, z, w, h, d, mat) {
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const m = mat.clone();
+            m.map = mat.map.clone();
+            m.map.repeat.set(w/2, d/2);
+            
+            const mesh = new THREE.Mesh(geo, m);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true; mesh.receiveShadow = true;
+            scene.add(mesh);
+            
+            const box = new THREE.Box3().setFromObject(mesh);
+            platforms.push({ mesh, box });
+        }
+
+        // SOL DE DÉPART
+        createBlock(0, -2, 0, 10, 4, 10, matGreen);
+
+        // GÉNÉRATION
+        let px = 0, py = 0, pz = -10;
+        for(let i=0; i<200; i++) {
+            const gap = 4 + Math.random() * 4;
+            const hVar = (Math.random() - 0.4) * 3;
+            const xVar = (Math.random() - 0.5) * 8;
+
+            pz -= gap;
+            px += xVar;
+            py += hVar;
+
+            const w = 2 + Math.random() * 3;
+            const d = 2 + Math.random() * 3;
+            
+            let m = matGreen;
+            if(i > 30) m = matBlue;
+            if(i > 100) m = matRed;
+
+            createBlock(px, py, pz, w, 1, d, m);
+        }
+
+        // PLATEFORME DE FIN
+        pz -= 5;
+        createBlock(px, py, pz - 10, 15, 1, 15, matGold);
+        finishLineZ = pz - 10;
+
+        // --- 4. JOUEUR ---
+        const player = {
+            x: 0, y: 2, z: 0,
+            vx: 0, vy: 0, vz: 0,
+            width: 0.5, height: 1.8,
+            speed: 18.0,
+            jump: 18.0,
+            gravity: 45.0,
+            // MODIFICATION : Friction à 12 (arrête de glisser, mais permet le mouvement)
+            friction: 12.0, 
+            airControl: 30.0,
+            onGround: false
+        };
+
+        // --- 5. INPUTS ---
+        const keys = { w:0, a:0, s:0, d:0 };
+        document.addEventListener('keydown', e => {
+            if(e.code==='KeyW') keys.w=1;
+            if(e.code==='KeyS') keys.s=1;
+            if(e.code==='KeyA') keys.a=1;
+            if(e.code==='KeyD') keys.d=1;
+            if(e.code==='Space') {
+                if(player.onGround) {
+                    player.vy = player.jump;
+                    player.onGround = false;
+                }
+            }
+        });
+        document.addEventListener('keyup', e => {
+            if(e.code==='KeyW') keys.w=0;
+            if(e.code==='KeyS') keys.s=0;
+            if(e.code==='KeyA') keys.a=0;
+            if(e.code==='KeyD') keys.d=0;
+        });
+
+        const controls = new PointerLockControls(camera, document.body);
+        const menu = document.getElementById('menu');
+        menu.onclick = () => controls.lock();
+        controls.addEventListener('lock', () => menu.style.display='none');
+        controls.addEventListener('unlock', () => menu.style.display='block');
+
+        // --- 6. PHYSIQUE & LOGIQUE ---
+        
+        function checkCollision(x, y, z) {
+            const min = new THREE.Vector3(x - player.width/2, y, z - player.width/2);
+            const max = new THREE.Vector3(x + player.width/2, y + player.height, z + player.width/2);
+            const playerBox = new THREE.Box3(min, max);
+
+            for(const p of platforms) {
+                if(playerBox.intersectsBox(p.box)) return p.box;
+            }
+            return null;
+        }
+
+        const clock = new THREE.Clock();
+        const progressBar = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+
+        function update(delta) {
+            if(!controls.isLocked) return;
+            if(delta > 0.1) delta = 0.1;
+
+            // PROGRESSION
+            let percentage = (player.z / finishLineZ) * 100;
+            percentage = Math.max(0, Math.min(100, percentage));
+            
+            progressBar.style.width = percentage + '%';
+            progressText.innerText = Math.round(percentage) + '%';
+
+            // MOUVEMENT
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            dir.y = 0; dir.normalize();
+            const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+
+            // MODIFICATION ICI : Accélération réduite à 200 (Moins vite au max)
+            const accel = player.onGround ? 200 : player.airControl;
+            
+            if(keys.w) { player.vx += dir.x * accel * delta; player.vz += dir.z * accel * delta; }
+            if(keys.s) { player.vx -= dir.x * accel * delta; player.vz -= dir.z * accel * delta; }
+            if(keys.a) { player.vx -= right.x * accel * delta; player.vz -= right.z * accel * delta; }
+            if(keys.d) { player.vx += right.x * accel * delta; player.vz += right.z * accel * delta; }
+
+            const f = player.onGround ? player.friction : 0.5;
+            player.vx -= player.vx * f * delta;
+            player.vz -= player.vz * f * delta;
+
+            player.vy -= player.gravity * delta;
+
+            // COLLISIONS (Solide)
+            if(checkCollision(player.x + player.vx * delta, player.y + 0.1, player.z)) {
+                player.vx = 0;
+            } else {
+                player.x += player.vx * delta;
+            }
+
+            if(checkCollision(player.x, player.y + 0.1, player.z + player.vz * delta)) {
+                player.vz = 0;
+            } else {
+                player.z += player.vz * delta;
+            }
+
+            const colY = checkCollision(player.x, player.y + player.vy * delta, player.z);
+            if(colY) {
+                if(player.vy < 0) {
+                    player.onGround = true;
+                    player.y = colY.max.y;
+                    player.vy = 0;
+                } else {
+                    player.vy = 0;
+                    player.y -= 0.1;
+                }
+            } else {
+                player.onGround = false;
+                player.y += player.vy * delta;
+            }
+
+            // RESPAWN
+            if(player.y < -30) {
+                player.x = 0; player.y = 5; player.z = 0;
+                player.vx=0; player.vy=0; player.vz=0;
+            }
+
+            camera.position.set(player.x, player.y + 1.6, player.z);
+
+            const spd = Math.sqrt(player.vx**2 + player.vz**2);
+            document.getElementById('speed-val').innerText = Math.round(spd*2);
+            document.getElementById('fps-val').innerText = Math.round(1/delta);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            update(clock.getDelta());
+            renderer.render(scene, camera);
+        }
+
+        window.onresize = () => {
+            camera.aspect = window.innerWidth/window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        };
+
+        animate();
+    </script>
+</body>
+</html>
